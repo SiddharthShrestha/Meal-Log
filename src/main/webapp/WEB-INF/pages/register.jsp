@@ -155,6 +155,12 @@
     }
     .err::before { content: '⚠'; font-size: 0.7rem; }
 
+    .field-hint {
+      font-size: 0.74rem;
+      color: var(--muted);
+      margin-top: 5px;
+    }
+
     .pass-wrap { position: relative; }
     .pass-wrap input { padding-right: 44px; }
     .toggle-pass {
@@ -248,8 +254,9 @@
       <div class="banner error">&#9888; <%= request.getAttribute("generalErr") %></div>
     <% } %>
 
-    <form action="register" method="post">
+    <form action="register" method="post" id="registerForm">
 
+      <!-- Full Name -->
       <div class="field">
         <label for="name">Full Name</label>
         <input
@@ -260,12 +267,15 @@
           value="<%= request.getAttribute("name") != null ? request.getAttribute("name") : "" %>"
           class="<%= request.getAttribute("nameErr") != null ? "invalid" : "" %>"
           autofocus
+          oninput="blockNumbers(this)"
         />
+        <div class="field-hint">Letters and spaces only — no numbers.</div>
         <% if (request.getAttribute("nameErr") != null) { %>
           <div class="err"><%= request.getAttribute("nameErr") %></div>
         <% } %>
       </div>
 
+      <!-- Email -->
       <div class="field">
         <label for="email">Email Address</label>
         <input
@@ -282,6 +292,7 @@
         <% } %>
       </div>
 
+      <!-- Password -->
       <div class="field">
         <label for="password">Password</label>
         <div class="pass-wrap">
@@ -293,7 +304,7 @@
             class="<%= request.getAttribute("passErr") != null ? "invalid" : "" %>"
             autocomplete="new-password"
           />
-          <button type="button" class="toggle-pass" onclick="togglePass('password', 'eye1')" aria-label="Show/hide password">
+          <button type="button" class="toggle-pass" onclick="togglePass('password','eye1')" aria-label="Show/hide password">
             <svg id="eye1" viewBox="0 0 24 24">
               <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
               <circle cx="12" cy="12" r="3"/>
@@ -305,6 +316,7 @@
         <% } %>
       </div>
 
+      <!-- Confirm Password -->
       <div class="field">
         <label for="confirm">Confirm Password</label>
         <div class="pass-wrap">
@@ -316,7 +328,7 @@
             class="<%= request.getAttribute("confirmErr") != null ? "invalid" : "" %>"
             autocomplete="new-password"
           />
-          <button type="button" class="toggle-pass" onclick="togglePass('confirm', 'eye2')" aria-label="Show/hide password">
+          <button type="button" class="toggle-pass" onclick="togglePass('confirm','eye2')" aria-label="Show/hide password">
             <svg id="eye2" viewBox="0 0 24 24">
               <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
               <circle cx="12" cy="12" r="3"/>
@@ -338,6 +350,45 @@
 </div>
 
 <script>
+  // ── Block numbers and special characters from name field in real time ──
+  function blockNumbers(input) {
+    // Remove anything that is not a letter or space as the user types
+    var pos = input.selectionStart;
+    var cleaned = input.value.replace(/[^a-zA-Z\s]/g, '');
+    if (cleaned !== input.value) {
+      input.value = cleaned;
+      // Restore cursor position
+      input.setSelectionRange(pos - 1, pos - 1);
+    }
+  }
+
+  // Also block on keydown so numbers never even appear
+  document.getElementById('name').addEventListener('keydown', function(e) {
+    // Allow: backspace, delete, tab, escape, enter, arrows, home, end
+    var allowed = [8, 9, 13, 27, 35, 36, 37, 38, 39, 40, 46];
+    if (allowed.indexOf(e.keyCode) !== -1) return;
+    // Allow Ctrl+A, Ctrl+C, Ctrl+V, Ctrl+X
+    if (e.ctrlKey || e.metaKey) return;
+    // Block digits
+    if (e.key >= '0' && e.key <= '9') {
+      e.preventDefault();
+      return;
+    }
+    // Block special characters — only allow letters and space
+    if (!/^[a-zA-Z\s]$/.test(e.key)) {
+      e.preventDefault();
+    }
+  });
+
+  // Handle paste — strip numbers and special characters from pasted text
+  document.getElementById('name').addEventListener('paste', function(e) {
+    e.preventDefault();
+    var pasted = (e.clipboardData || window.clipboardData).getData('text');
+    var cleaned = pasted.replace(/[^a-zA-Z\s]/g, '');
+    document.execCommand('insertText', false, cleaned);
+  });
+
+  // ── Show/hide password toggle ──
   function togglePass(inputId, iconId) {
     var input = document.getElementById(inputId);
     var icon  = document.getElementById(iconId);

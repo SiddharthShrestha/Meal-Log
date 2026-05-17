@@ -1,96 +1,201 @@
 package com.siddharth.controller;
 
+import com.siddharth.model.User;
+import com.siddharth.service.UserService;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.annotation.WebServlet;
 import jakarta.servlet.http.HttpServlet;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import jakarta.servlet.http.HttpSession;
-import java.io.IOException;
-import java.sql.*;
 
-import com.siddharth.config.DatabaseConfig;
+import java.io.IOException;
+import java.util.concurrent.ConcurrentHashMap;
 
 @WebServlet("/login")
 public class LoginController extends HttpServlet {
-    private static final long serialVersionUID = 1L;
 
-    private static final String ADMIN_EMAIL    = "siddharth@gmail.com";
-    private static final String ADMIN_PASSWORD = "siddharth1488";
+    private final UserService userService = new UserService();
 
-    protected void doGet(HttpServletRequest request, HttpServletResponse response)
+    // Brute-force protection (in-memory; resets on redeploy)
+    private final ConcurrentHashMap<String, Integer> failCount  = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<String, Long>    lockUntil  = new ConcurrentHashMap<>();
+
+    private static final int  MAX_ATTEMPTS = 3;
+    private static final long LOCKOUT_MS   = 5 * 60 * 1_000L; // 5 minutes
+
+    // -----------------------------------------------------------------------
+    // GET – show login page (or redirect if already logged in)
+    // -----------------------------------------------------------------------
+    @Override
+    protected void doGet(HttpServletRequest req, HttpServletResponse resp)
             throws ServletException, IOException {
-        request.getRequestDispatcher("/WEB-INF/pages/login.jsp").forward(request, response);
+
+        HttpSession existing = req.getSession(false);
+        if (existing != null) {
+            if (existing.getAttribute("userId") != null) {
+                resp.sendRedirect(req.getContextPath() + "/dashboard");
+                return;
+            }
+            if (existing.getAttribute("adminId") != null) {
+                resp.sendRedirect(req.getContextPath() + "/admin");
+                return;
+            }
+        }
+        req.getRequestDispatcher("/WEB-INF/pages/login.jsp").forward(req, resp);
     }
 
-    protected void doPost(HttpServletRequest request, HttpServletResponse response)
+    // -----------------------------------------------------------------------
+    // POST – process login form
+    // -----------------------------------------------------------------------
+    @Override
+    protected void doPost(HttpServletRequest req, HttpServletResponse resp)
             throws ServletException, IOException {
 
-        String loginType = request.getParameter("login_type") != null ? request.getParameter("login_type").trim() : "user";
-        String email     = request.getParameter("email")      != null ? request.getParameter("email").trim()      : "";
-        String password  = request.getParameter("password")   != null ? request.getParameter("password")          : "";
+        String email    = req.getParameter("email").trim();
+        String password = req.getParameter("password");
+        String role     = req.getParameter("login_type"); // "user" or "admin"
 
-        boolean valid = true;
-
-        if (email.isEmpty() || !email.matches("\\S+@\\S+\\.\\S+")) {
-            request.setAttribute("emailErr", "Please enter a valid email.");
-            valid = false;
+        if ("admin".equals(role)) {
+            handleAdminLogin(req, resp, email, password);
+        } else {
+            handleUserLogin(req, resp, email, password);
         }
-        if (password.length() < 6) {
-            request.setAttribute("passErr", "Password must be at least 6 characters.");
-            valid = false;
-        }
+    }
 
-        if (!valid) {
-            request.setAttribute("email",      email);
-            request.setAttribute("login_type", loginType);
-            request.getRequestDispatcher("/WEB-INF/pages/login.jsp").forward(request, response);
+    // -----------------------------------------------------------------------
+    // Admin login
+    // -----------------------------------------------------------------------
+    private void handleAdminLogin(HttpServletRequest req, HttpServletResponse resp,
+                                   String email, String password)
+            throws IOException, ServletException {
+
+        // Check lockout first
+        if (isLockedOut(email)) {
+            long remaining = (lockUntil.get(email) - System.currentTimeMillis()) / 1_000;
+            req.setAttribute("loginErr",
+                "Account locked. Too many failed attempts. Try again in " + remaining + " second(s).");
+            req.setAttribute("login_type", "admin");
+            req.getRequestDispatcher("/WEB-INF/pages/login.jsp").forward(req, resp);
             return;
         }
 
-        // ── ADMIN LOGIN ──
-        if ("admin".equals(loginType)) {
-            if (email.equals(ADMIN_EMAIL) && password.equals(ADMIN_PASSWORD)) {
-                HttpSession session = request.getSession();
-                session.setAttribute("adminLoggedIn", true);
-                session.setAttribute("adminEmail",    email);
-                response.sendRedirect(request.getContextPath() + "/admin");
+        // Hardcoded admin credentials (replace with DB lookup if needed)
+        boolean credentialsMatch = "admin@meallog.com".equals(email)
+                                && "admin123".equals(password);
+
+        if (credentialsMatch) {
+            // ── Successful admin login ──────────────────────────────────────
+            failCount.remove(email);
+            lockUntil.remove(email);
+
+            // Invalidate any existing session to prevent session fixation
+            HttpSession old = req.getSession(false);
+            if (old != null) old.invalidate();
+
+            HttpSession session = req.getSession(true);
+            session.setAttribute("adminId", email);
+
+            // ★ FIX: AdminController.isAdminLoggedIn() checks for "adminLoggedIn"
+            //        (Boolean.TRUE).  LoginController was setting only "adminId",
+            //        so isAdminLoggedIn() always returned false and immediately
+            //        redirected back to /login.  Adding this one line fixes it.
+            session.setAttribute("adminLoggedIn", Boolean.TRUE);
+
+            session.setMaxInactiveInterval(60 * 60); // 1-hour timeout
+
+            resp.sendRedirect(req.getContextPath() + "/admin");
+
+        } else {
+            // ── Failed attempt ──────────────────────────────────────────────
+            int attempts = failCount.merge(email, 1, Integer::sum);
+
+            if (attempts >= MAX_ATTEMPTS) {
+                lockUntil.put(email, System.currentTimeMillis() + LOCKOUT_MS);
+                failCount.remove(email);
+                req.setAttribute("loginErr",
+                    "Account locked for 5 minutes due to too many failed attempts.");
             } else {
-                request.setAttribute("loginErr",   "Invalid admin credentials.");
-                request.setAttribute("email",      email);
-                request.setAttribute("login_type", "admin");
-                request.getRequestDispatcher("/WEB-INF/pages/login.jsp").forward(request, response);
+                int left = MAX_ATTEMPTS - attempts;
+                if (left == 1) {
+                    req.setAttribute("loginErr",
+                        "Incorrect email or password. 1 attempt left — warning.");
+                } else {
+                    req.setAttribute("loginErr",
+                        "Incorrect email or password. " + left + " attempt(s) remaining.");
+                }
             }
+
+            req.setAttribute("login_type", "admin");
+            req.getRequestDispatcher("/WEB-INF/pages/login.jsp").forward(req, resp);
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Regular user login
+    // -----------------------------------------------------------------------
+    private void handleUserLogin(HttpServletRequest req, HttpServletResponse resp,
+                                  String email, String password)
+            throws IOException, ServletException {
+
+        if (isLockedOut(email)) {
+            long remaining = (lockUntil.get(email) - System.currentTimeMillis()) / 1_000;
+            req.setAttribute("loginErr",
+                "Account locked. Too many failed attempts. Try again in " + remaining + " second(s).");
+            req.getRequestDispatcher("/WEB-INF/pages/login.jsp").forward(req, resp);
             return;
         }
 
-        // ── USER LOGIN ──
-        try (Connection conn = DatabaseConfig.getConnection()) {
-            PreparedStatement ps = conn.prepareStatement(
-                "SELECT id, full_name, email FROM users WHERE email = ? AND password = ?");
-            ps.setString(1, email);
-            ps.setString(2, password);
-            ResultSet rs = ps.executeQuery();
+        try {
+            User user = userService.findByEmailAndPassword(email, password);
 
-            if (rs.next()) {
-                HttpSession session = request.getSession();
-                session.setAttribute("userId",    rs.getInt("id"));
-                session.setAttribute("userName",  rs.getString("full_name"));
-                session.setAttribute("userEmail", rs.getString("email"));
-                response.sendRedirect(request.getContextPath() + "/dashboard");
+            if (user != null) {
+                failCount.remove(email);
+                lockUntil.remove(email);
+
+                HttpSession old = req.getSession(false);
+                if (old != null) old.invalidate();
+
+                HttpSession session = req.getSession(true);
+                session.setAttribute("userId",    user.getId());
+                session.setAttribute("userName",  user.getFullName());
+                session.setAttribute("userEmail", user.getEmail());
+                session.setMaxInactiveInterval(60 * 60);
+
+                resp.sendRedirect(req.getContextPath() + "/dashboard");
+
             } else {
-                request.setAttribute("loginErr",   "Invalid email or password.");
-                request.setAttribute("email",      email);
-                request.setAttribute("login_type", "user");
-                request.getRequestDispatcher("/WEB-INF/pages/login.jsp").forward(request, response);
+                int attempts = failCount.merge(email, 1, Integer::sum);
+
+                if (attempts >= MAX_ATTEMPTS) {
+                    lockUntil.put(email, System.currentTimeMillis() + LOCKOUT_MS);
+                    failCount.remove(email);
+                    req.setAttribute("loginErr",
+                        "Account locked for 5 minutes due to too many failed attempts.");
+                } else {
+                    int left = MAX_ATTEMPTS - attempts;
+                    if (left == 1) {
+                        req.setAttribute("loginErr",
+                            "Incorrect email or password. 1 attempt left — warning.");
+                    } else {
+                        req.setAttribute("loginErr",
+                            "Incorrect email or password. " + left + " attempt(s) remaining.");
+                    }
+                }
+                req.getRequestDispatcher("/WEB-INF/pages/login.jsp").forward(req, resp);
             }
 
         } catch (Exception e) {
-            e.printStackTrace();
-            request.setAttribute("loginErr",   "Something went wrong. Please try again.");
-            request.setAttribute("email",      email);
-            request.setAttribute("login_type", loginType);
-            request.getRequestDispatcher("/WEB-INF/pages/login.jsp").forward(request, response);
+            req.setAttribute("loginErr", "A server error occurred. Please try again.");
+            req.getRequestDispatcher("/WEB-INF/pages/login.jsp").forward(req, resp);
         }
+    }
+
+    // -----------------------------------------------------------------------
+    // Helpers
+    // -----------------------------------------------------------------------
+    private boolean isLockedOut(String email) {
+        Long until = lockUntil.get(email);
+        return until != null && System.currentTimeMillis() < until;
     }
 }

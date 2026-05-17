@@ -78,7 +78,6 @@
     .brand-name span { color: var(--green); transition: color 0.3s; }
     .brand-name span.admin-mode { color: var(--admin); }
 
-    /* ── Toggle tabs ── */
     .type-toggle {
       display: flex;
       background: #ece9e2;
@@ -121,7 +120,6 @@
       box-shadow: 0 1px 6px rgba(44,62,122,0.12);
     }
 
-    /* ── Card ── */
     .card {
       background: var(--white);
       border-radius: var(--radius);
@@ -131,9 +129,7 @@
       position: relative;
       transition: border-color 0.3s;
     }
-    .card.admin-mode {
-      border-color: rgba(176,186,232,0.8);
-    }
+    .card.admin-mode { border-color: rgba(176,186,232,0.8); }
 
     .card-deco {
       position: absolute; top: 0; right: 0;
@@ -255,6 +251,17 @@
       pointer-events: none;
     }
 
+    .forgot-link {
+      display: block;
+      text-align: right;
+      margin-top: 6px;
+      font-size: 0.8rem;
+      color: var(--green);
+      text-decoration: none;
+      font-weight: 600;
+    }
+    .forgot-link:hover { text-decoration: underline; }
+
     .btn-primary {
       width: 100%;
       padding: 13px;
@@ -272,8 +279,8 @@
     }
     .btn-primary:hover  { background: var(--green-light); }
     .btn-primary:active { transform: scale(0.99); }
-    .btn-primary.admin-btn             { background: var(--admin); }
-    .btn-primary.admin-btn:hover       { background: var(--admin-light); }
+    .btn-primary.admin-btn       { background: var(--admin); }
+    .btn-primary.admin-btn:hover { background: var(--admin-light); }
 
     .divider {
       display: flex;
@@ -347,7 +354,7 @@
     <div class="card-title" id="cardTitle"><%= isAdmin ? "Admin Access" : "Welcome back" %></div>
     <div class="card-subtitle" id="cardSubtitle"><%= isAdmin ? "Sign in to the admin panel" : "Sign in to continue tracking your meals" %></div>
 
-    <%-- Admin notice --%>
+    <!-- Admin notice -->
     <div id="adminNotice" style="<%= !isAdmin ? "display:none;" : "" %>">
       <div class="admin-notice">
         <svg viewBox="0 0 24 24"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
@@ -360,7 +367,12 @@
       <div class="banner success">&#10003; Account created! You can now sign in.</div>
     <% } %>
 
-    <%-- Error banner --%>
+    <%-- Password reset success banner --%>
+    <% if ("true".equals(request.getParameter("passwordReset"))) { %>
+      <div class="banner success">&#10003; Password updated! You can now sign in with your new password.</div>
+    <% } %>
+
+    <%-- Error / lockout banner --%>
     <% if (request.getAttribute("loginErr") != null) { %>
       <div class="banner error">&#9888; <%= request.getAttribute("loginErr") %></div>
     <% } %>
@@ -406,6 +418,7 @@
         <% if (request.getAttribute("passErr") != null) { %>
           <div class="err"><%= request.getAttribute("passErr") %></div>
         <% } %>
+        <a href="forgot-password" class="forgot-link" id="forgotLink" style="<%= isAdmin ? "display:none;" : "" %>">Forgot password?</a>
       </div>
 
       <button type="submit" class="btn-primary <%= isAdmin ? "admin-btn" : "" %>" id="submitBtn">
@@ -416,6 +429,7 @@
     <% if (!isAdmin) { %>
       <div class="divider"><span>new here?</span></div>
       <div class="footer-link">Don't have an account? <a href="register">Create one</a></div>
+      <div class="footer-link" style="margin-top:8px;"><a href="about">About MealLog</a></div>
     <% } %>
 
   </div>
@@ -427,38 +441,34 @@
 
     document.getElementById('loginTypeInput').value = type;
 
-    // Toggle buttons
     document.getElementById('btn-user').className  = 'type-btn' + (!isAdmin ? ' active-user'  : '');
     document.getElementById('btn-admin').className = 'type-btn' + ( isAdmin ? ' active-admin' : '');
 
-    // Card border + brand colour
     document.getElementById('loginCard').classList.toggle('admin-mode', isAdmin);
     document.getElementById('brandIcon').classList.toggle('admin-mode', isAdmin);
     document.getElementById('brandAccent').classList.toggle('admin-mode', isAdmin);
 
-    // Titles
-    document.getElementById('cardTitle').textContent    = isAdmin ? 'Admin Access'                          : 'Welcome back';
-    document.getElementById('cardSubtitle').textContent = isAdmin ? 'Sign in to the admin panel'            : 'Sign in to continue tracking your meals';
+    document.getElementById('cardTitle').textContent    = isAdmin ? 'Admin Access'               : 'Welcome back';
+    document.getElementById('cardSubtitle').textContent = isAdmin ? 'Sign in to the admin panel' : 'Sign in to continue tracking your meals';
 
-    // Admin notice
     document.getElementById('adminNotice').style.display = isAdmin ? '' : 'none';
 
-    // Submit button
     var btn = document.getElementById('submitBtn');
     btn.textContent = isAdmin ? 'Access Admin Panel' : 'Sign In';
     btn.classList.toggle('admin-btn', isAdmin);
 
-    // Input focus rings
     document.querySelectorAll('#loginForm input[type="email"], #loginForm input[type="password"], #loginForm input[type="text"]')
       .forEach(function(el) {
         el.classList.toggle('admin-focus', isAdmin);
       });
 
-    // Footer link (register)
-    var footer = document.querySelector('.footer-link');
+    var footer  = document.querySelector('.footer-link');
     var divider = document.querySelector('.divider');
     if (footer)  footer.style.display  = isAdmin ? 'none' : '';
     if (divider) divider.style.display = isAdmin ? 'none' : '';
+
+    var forgot = document.getElementById('forgotLink');
+    if (forgot) forgot.style.display = isAdmin ? 'none' : '';
   }
 
   function togglePassword() {
